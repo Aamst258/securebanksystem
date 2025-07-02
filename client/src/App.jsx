@@ -1,12 +1,14 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-// import { useAuth, AuthProvider } from './auth'; // Assuming you define these in a separate file
-// import Home from './pages/Home';
-// import Login from './pages/Login';
-// import Dashboard from './pages/Dashboard';
-// import Transactions from './pages/Transactions';
-// import Transfer from './pages/Transfer';
-// import Settings from './pages/Settings';
-// import Layout from './components/Layout';
+import { useAuth, AuthProvider } from './auth/auth';
+
+import Home from './pages/Home';
+import Login from './pages/Login';
+import Signup from './pages/Signup'; // ✅ Imported Signup Page
+import Dashboard from './pages/Dashboard';
+import Transactions from './pages/Transactions';
+import Transfer from './pages/Transfer';
+import Settings from './pages/Settings';
+import Layout from './components/Layout';
 
 function PrivateRoute({ children }) {
   const { isAuthenticated } = useAuth();
@@ -21,7 +23,8 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
-            
+            <Route path="/signup" element={<Signup />} /> {/* ✅ Signup route added */}
+
             <Route
               path="/dashboard"
               element={
@@ -61,6 +64,6 @@ function App() {
       </AuthProvider>
     </Router>
   );
-}  
+}
 
-export default App ;
+export default App;

@@ -1,67 +1,55 @@
-import { Outlet, Link, NavLink } from 'react-router-dom';
-import { useAuth } from '../auth';
+import { Link } from 'react-router-dom';
 
-export default function Layout() {
-  const { user, logout } = useAuth();          // provided by your auth context
-
+function Layout({ children }) {
   return (
     <>
-      <nav className="navbar navbar-expand-lg navbar-dark bg-primary">
-        <div className="container-fluid">
-          <Link className="navbar-brand" to="/">
-            SecureBank
-          </Link>
-
+      <nav className="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+        <div className="container">
+          <Link className="navbar-brand" to="/">SecureBank</Link>
           <button
             className="navbar-toggler"
             type="button"
             data-bs-toggle="collapse"
-            data-bs-target="#navbarBankNav"
-            aria-controls="navbarBankNav"
+            data-bs-target="#navbarNav"
+            aria-controls="navbarNav"
             aria-expanded="false"
             aria-label="Toggle navigation"
           >
-            <span className="navbar-toggler-icon" />
+            <span className="navbar-toggler-icon"></span>
           </button>
-
-          <div className="collapse navbar-collapse" id="navbarBankNav">
-            {user && (
-              <ul className="navbar-nav me-auto mb-2 mb-lg-0">
-                {['dashboard', 'transactions', 'transfer', 'settings'].map(
-                  (p) => (
-                    <li className="nav-item" key={p}>
-                      <NavLink to={`/${p}`} className="nav-link">
-                        {p[0].toUpperCase() + p.slice(1)}
-                      </NavLink>
-                    </li>
-                  )
-                )}
-              </ul>
-            )}
-
-            {user ? (
-              <>
-                <span className="navbar-text me-2">Hi {user.name}</span>
-                <button
-                  className="btn btn-outline-light btn-sm"
-                  onClick={logout}
-                >
-                  Logout
-                </button>
-              </>
-            ) : (
-              <Link className="btn btn-light btn-sm" to="/login">
-                Login
-              </Link>
-            )}
+          <div className="collapse navbar-collapse" id="navbarNav">
+            <ul className="navbar-nav me-auto mb-2 mb-lg-0">
+              <li className="nav-item">
+                <Link className="nav-link" to="/dashboard">Dashboard</Link>
+              </li>
+              <li className="nav-item">
+                <Link className="nav-link" to="/transactions">Transactions</Link>
+              </li>
+              <li className="nav-item">
+                <Link className="nav-link" to="/transfer">Transfer</Link>
+              </li>
+              <li className="nav-item">
+                <Link className="nav-link" to="/settings">Settings</Link>
+              </li>
+            </ul>
+            <ul className="navbar-nav ms-auto">
+              <li className="nav-item">
+                <Link className="nav-link" to="/login">Login</Link>
+              </li>
+              <li className="nav-item">
+                <Link className="nav-link" to="/signup">Signup</Link>
+              </li>
+            </ul>
           </div>
         </div>
       </nav>
 
-      {/* Page content */}
-      <main className="container my-4">
-        <Outlet />
-      </main>
+      {/* Added margin to offset fixed navbar height */}
+      <div className="container mt-5 pt-4">
+        {children}
+      </div>
     </>
   );
 }
+
+export default Layout;
