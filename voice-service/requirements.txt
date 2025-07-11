@@ -1,0 +1,8 @@
+
+flask==2.3.3
+flask-cors==4.0.0
+resemblyzer==0.1.4
+numpy==1.24.3
+soundfile==0.12.1
+librosa==0.10.1
+moviepy==1.0.3
