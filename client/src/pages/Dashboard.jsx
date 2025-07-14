@@ -48,7 +48,7 @@ function Dashboard() {
         <div className="col-12">
           <h2>Welcome back, {userDetails?.name || user?.name}! 👋</h2>
           <p className="text-muted">
-            Account No: <strong>{userDetails?.accountNumber || 'Loading...'}</strong>
+            Account No: <strong>{userDetails?.accountNumber ?? user?.accountNumber ?? 'Loading...'}</strong>
           </p>
           <p className="text-muted">Your secure banking dashboard</p>
         </div>
@@ -59,7 +59,7 @@ function Dashboard() {
           <div className="card bg-primary text-white">
             <div className="card-body">
               <h5 className="card-title">💰 Account Balance</h5>
-              <h3>₹{user?.accountBalance?.toLocaleString('en-IN') || '0'}</h3>
+              <h3>₹{(userDetails?.accountBalance ?? user?.accountBalance ?? 0).toLocaleString('en-IN')}</h3>
               <small>Available Balance</small>
             </div>
           </div>
@@ -68,7 +68,7 @@ function Dashboard() {
           <div className="card bg-success text-white">
             <div className="card-body">
               <h5 className="card-title">📊 This Month</h5>
-              <h3>₹2,340.50</h3>
+              <h3>₹{(transactions && transactions.length > 0 ? transactions.reduce((sum, t) => sum + (t.amount || 0), 0) : 0).toLocaleString('en-IN')}</h3>
               <small>Total Spent</small>
             </div>
           </div>

@@ -1,10 +1,10 @@
 from flask import Flask, request, jsonify
 from resemblyzer import VoiceEncoder, preprocess_wav
-from moviepy.editor import AudioFileClip
 import numpy as np
 import os
 from tempfile import NamedTemporaryFile
 from flask_cors import CORS
+import subprocess  
 
 app = Flask(__name__)
 CORS(app)
@@ -17,18 +17,21 @@ def embed():
         # Save as webm first
         with NamedTemporaryFile(delete=False, suffix=".webm") as temp_webm:
             audio.save(temp_webm.name)
-            wav_path = temp_webm.name.replace(".webm", ".wav")
-            # Convert webm to wav
-            clip = AudioFileClip(temp_webm.name)
-            clip.write_audiofile(wav_path, codec='pcm_s16le')
-            clip.close()
-            wav = preprocess_wav(wav_path)
-            embedding = encoder.embed_utterance(wav)
-            os.remove(temp_webm.name)
-            os.remove(wav_path)
-            return jsonify({"success": True, "embedding": embedding.tolist()})
+            temp_webm_path = temp_webm.name  # Save the path
+
+        # Now the file is closed, safe to use with ffmpeg
+        wav_path = temp_webm_path.replace(".webm", ".wav")
+        ffmpeg_cmd = [
+            "ffmpeg", "-y", "-i", temp_webm_path, "-ar", "16000", "-ac", "1", wav_path
+        ]
+        subprocess.run(ffmpeg_cmd, check=True)
+        wav = preprocess_wav(wav_path)
+        embedding = encoder.embed_utterance(wav)
+        os.remove(temp_webm_path)
+        os.remove(wav_path)
+        return jsonify({"success": True, "embedding": embedding.tolist()})
     except Exception as e:
-        print("Voice embedding error:", e)  # <--- Add this line
+        print("Voice embedding error:", e)
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/verify', methods=['POST'])

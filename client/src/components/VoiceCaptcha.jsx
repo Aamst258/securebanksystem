@@ -9,77 +9,88 @@ function VoiceCaptcha({ transactionId, userId, onVerificationComplete, isPreVeri
   const [audioBlob, setAudioBlob] = useState(null);
   const [verificationStatus, setVerificationStatus] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [attemptsLeft, setAttemptsLeft] = useState(3);
+  const [isAudioReady, setIsAudioReady] = useState(false);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   useEffect(() => {
     generateQuestion();
   }, []);
 
   const generateQuestion = async () => {
+    if (!userId) {
+      setVerificationStatus('User ID is missing. Cannot generate question.');
+      return;
+    }
     try {
       setIsLoading(true);
-      const response = await fetch(`${API_BASE_URL}/api/voice-captcha/generate`, {
+      setIsAudioReady(false);
+      setIsAudioPlaying(false);
+      setVerificationStatus('Generating question...');
+      const response = await fetch(`${API_BASE_URL}/voice-captcha/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, transactionId })
       });
-
+      if (!response.ok) {
+        setVerificationStatus('Failed to generate question. Please try again.');
+        setIsLoading(false);
+        return;
+      }
       const data = await response.json();
       if (data.success) {
         setQuestion(data.question);
         setAudioUrl(data.audioUrl);
-
+        setIsAudioReady(true);
+        setVerificationStatus('Listen to the question and then record your answer.');
         // Play the question audio
         const audio = new Audio(data.audioUrl);
+        setIsAudioPlaying(true);
+        audio.onended = () => setIsAudioPlaying(false);
         audio.play();
+      } else {
+        setVerificationStatus(data.message || 'Failed to generate question.');
       }
     } catch (error) {
-      console.error('Error generating question:', error);
+      setVerificationStatus('Error generating question.');
     } finally {
       setIsLoading(false);
     }
   };
 
   const startRecording = async () => {
+    if (!isAudioReady || isAudioPlaying) {
+      setVerificationStatus('Please wait for the question audio to finish before recording.');
+      return;
+    }
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      setVerificationStatus('Already recording!');
+      return;
+    }
+    setAudioBlob(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-
+      const recorder = new window.MediaRecorder(stream);
       let chunks = [];
-
-      recorder.ondataavailable = (event) => {
-        chunks.push(event.data);
-      };
-
+      recorder.ondataavailable = (event) => chunks.push(event.data);
       recorder.onstop = () => {
         const blob = new Blob(chunks, { type: 'audio/webm' });
         setAudioBlob(blob);
+        setIsRecording(false);
+        stream.getTracks().forEach(track => track.stop());
       };
-
       recorder.start();
       setMediaRecorder(recorder);
       setIsRecording(true);
-
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
-        setAudioBlob(blob);
-      };
-
-      recorder.start();
-      setMediaRecorder(recorder);
-      setIsRecording(true);
-
       // Stop recording after 10 seconds
       setTimeout(() => {
         if (recorder.state === 'recording') {
           recorder.stop();
           setIsRecording(false);
-          stream.getTracks().forEach(track => track.stop());
         }
       }, 10000);
-
     } catch (error) {
-      console.error('Error starting recording:', error);
-      setVerificationStatus('Microphone access denied');
+      setVerificationStatus('Microphone access denied or unavailable.');
     }
   };
 
@@ -106,16 +117,32 @@ function VoiceCaptcha({ transactionId, userId, onVerificationComplete, isPreVeri
       formData.append('userId', userId);
       formData.append('transactionId', transactionId);
 
-      const response = await fetch(`${API_BASE_URL}/api/voice-captcha/verify`, {
+      const response = await fetch(`${API_BASE_URL}/voice-captcha/verify`, {
         method: 'POST',
         body: formData
       });
 
       const data = await response.json();
 
+      if (typeof data.attemptsLeft === 'number') {
+        setAttemptsLeft(data.attemptsLeft);
+      }
+
       if (data.success) {
         setVerificationStatus('✅ Verification successful!');
         onVerificationComplete(true, 'Voice verification passed');
+      } else if (data.newQuestion && data.newAudioUrl && data.attemptsLeft > 0) {
+        // Conversational loop: show new question, play new audio, allow retry
+        setQuestion(data.newQuestion);
+        setAudioUrl(data.newAudioUrl);
+        setAudioBlob(null);
+        setVerificationStatus(`❌ Verification failed. Try again! Attempts left: ${data.attemptsLeft}`);
+        // Play the new question audio
+        const audio = new Audio(data.newAudioUrl);
+        audio.play();
+      } else if (data.attemptsLeft === 0) {
+        setVerificationStatus('❌ Maximum attempts reached. Transaction denied.');
+        onVerificationComplete(false, 'Maximum attempts reached. Transaction denied.');
       } else {
         setVerificationStatus('❌ Verification failed');
         onVerificationComplete(false, data.message || 'Voice verification failed');
@@ -181,7 +208,7 @@ function VoiceCaptcha({ transactionId, userId, onVerificationComplete, isPreVeri
           <button 
             className={`btn ${isRecording ? 'btn-danger' : 'btn-success'}`}
             onClick={isRecording ? stopRecording : startRecording}
-            disabled={isLoading}
+            disabled={isLoading || !isAudioReady || isAudioPlaying}
           >
             {isRecording ? '⏹️ Stop Recording' : '🎙️ Start Recording'}
           </button>
@@ -213,6 +240,12 @@ function VoiceCaptcha({ transactionId, userId, onVerificationComplete, isPreVeri
           <div className={`alert ${verificationStatus.includes('✅') ? 'alert-success' : 'alert-danger'}`}>
             {verificationStatus}
           </div>
+        )}
+        {typeof attemptsLeft === 'number' && attemptsLeft > 0 && (
+          <div className="alert alert-info mb-2">Attempts left: {attemptsLeft}</div>
+        )}
+        {attemptsLeft === 0 && (
+          <div className="alert alert-danger mb-2">You have reached the maximum number of attempts. Please try again later.</div>
         )}
       </div>
     </div>

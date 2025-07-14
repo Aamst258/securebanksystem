@@ -64,8 +64,7 @@ const signup = async (req, res) => {
       firstSchool,
       childhoodFriend,
       language: language || "en",
-      accountBalance: 50000, // Optional: initialize balance
-      accountNumber: newAccountNumber, // ✅ assign account number
+      accountNumber: newAccountNumber, // assign account number
       voiceprintId,
       voiceEmbedding: voiceEmbedding || [],
     });

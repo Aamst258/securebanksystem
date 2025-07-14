@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/auth';
 
@@ -32,6 +32,11 @@ function Signup() {
 
   const [voiceBlob, setVoiceBlob] = useState(null);
   const [recording, setRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0); // in seconds
+  const [timerInterval, setTimerInterval] = useState(null);
+  const timerIntervalRef = useRef(null); // NEW: use ref for interval
+  const mediaRecorderRef = useRef(null);
+  const startTimeRef = useRef(null);
 
   const navigate = useNavigate();
 
@@ -56,23 +61,54 @@ function Signup() {
   };
 
   const startRecording = async () => {
+    setVoiceBlob(null);
+    setRecordingDuration(0);
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mediaRecorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = mediaRecorder;
     let chunks = [];
 
     mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
     mediaRecorder.onstop = () => {
       const blob = new Blob(chunks, { type: 'audio/webm' });
       setVoiceBlob(blob);
+      setRecording(false);
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+      setTimerInterval(null); // keep state in sync
+      setRecordingDuration((Date.now() - startTimeRef.current) / 1000);
+      // Stop all tracks to release the mic
+      stream.getTracks().forEach(track => track.stop());
     };
 
     mediaRecorder.start();
     setRecording(true);
+    startTimeRef.current = Date.now();
+    const interval = setInterval(() => {
+      setRecordingDuration((Date.now() - startTimeRef.current) / 1000);
+    }, 100);
+    timerIntervalRef.current = interval;
+    setTimerInterval(interval);
 
+    // Auto-stop after 5 seconds
     setTimeout(() => {
-      mediaRecorder.stop();
-      setRecording(false);
+      if (mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
     }, 5000);
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+      setTimerInterval(null);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -102,6 +138,7 @@ function Signup() {
       const voiceForm = new FormData();
       voiceForm.append('voice', voiceBlob);
       voiceForm.append('email', formData.email);
+      voiceForm.append('duration', recordingDuration); // Optionally send duration
 
       const voiceRes = await fetch('http://localhost:5000/api/voice/register', {
         method: 'POST',
@@ -394,12 +431,15 @@ function Signup() {
 
                     <div className="mb-3">
                       <label className="form-label fw-semibold">Voice Registration</label><br />
-                      <button type="button" onClick={startRecording} className="btn btn-outline-secondary">
-                        {recording ? 'Recording...' : '🎙️ Record Voice'}
+                      <button type="button" onClick={recording ? stopRecording : startRecording} className="btn btn-outline-secondary">
+                        {recording ? 'Stop Recording' : '🎙️ Record Voice'}
                       </button>
-                      {voiceBlob && (
+                      {recording && (
+                        <div className="mt-2 text-primary">Recording... {recordingDuration.toFixed(1)}s</div>
+                      )}
+                      {voiceBlob && !recording && (
                         <>
-                          <div className="mt-2 text-success">✅ Voice recorded successfully</div>
+                          <div className="mt-2 text-success">✅ Voice recorded successfully ({recordingDuration.toFixed(1)}s)</div>
                           <audio
                             className="mt-2"
                             src={URL.createObjectURL(voiceBlob)}
