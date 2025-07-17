@@ -1,6 +1,5 @@
 const User = require("../models/User");
 const Transaction = require("../models/Transaction");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { logVoiceVerification } = require("../middleware/voiceVerification");
 const axios = require("axios");
 const dotenv = require("dotenv");
@@ -8,9 +7,11 @@ dotenv.config();
 const FormData = require("form-data");
 const fs = require("fs");
 const util = require("util");
+const NodeCache = require("node-cache");
+const questionCache = new NodeCache({ stdTTL: 120 }); // 2 minutes TTL
 
 // Retry logic for Gemini API
-const retryWithBackoff = async (fn, retries = 3, delay = 1000) => {
+const retryWithBackoff = async (fn, retries = 2, delay = 3000) => {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
@@ -25,35 +26,41 @@ const retryWithBackoff = async (fn, retries = 3, delay = 1000) => {
   }
 };
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// ElevenLabs TTS helper
-async function synthesizeWithElevenLabs(
-  text,
-  voice = "Rachel",
-  outputPath = "audio/output.mp3"
-) {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  const url = `https://api.elevenlabs.io/v1/text-to-speech/${voice}`;
+// Remove ElevenLabs TTS helper and AssemblyAI STT logic
+// Add helpers to call local Python service for TTS and STT
+// Helper to call Python TTS (Coqui)
+async function synthesizeWithCoqui(text, outputPath = "audio/output.mp3") {
   const response = await axios.post(
-    url,
-    {
-      text,
-      model_id: "eleven_multilingual_v2",
-      voice_settings: { stability: 0.5, similarity_boost: 0.5 },
-    },
-    {
-      headers: {
-        "xi-api-key": apiKey,
-        "Content-Type": "application/json",
-      },
-      responseType: "arraybuffer",
-    }
+    "http://localhost:5001/tts",
+    { text },
+    { responseType: "arraybuffer" }
   );
   const writeFile = util.promisify(fs.writeFile);
   await writeFile(outputPath, response.data, "binary");
   return outputPath;
 }
+
+// Helper to call Python STT (Vosk)
+async function convertSpeechToText(audioPath) {
+  const formData = new FormData();
+  formData.append("audio", fs.createReadStream(audioPath));
+  const response = await axios.post("http://localhost:5001/stt", formData, {
+    headers: formData.getHeaders(),
+  });
+  return response.data.text || "";
+}
+
+// Map of profile fields to question templates
+const QUESTION_TEMPLATES = [
+  { field: "nickname", question: "What is your nickname?" },
+  { field: "shoeSize", question: "What is your shoe size?" },
+  { field: "favoriteColor", question: "What is your favorite color?" },
+  { field: "birthPlace", question: "What is your birth place?" },
+  { field: "petName", question: "What is your pet's name?" },
+  { field: "motherMaidenName", question: "What is your mother's maiden name?" },
+  { field: "firstSchool", question: "What is the name of your first school?" },
+  { field: "childhoodFriend", question: "Who was your best childhood friend?" },
+];
 
 const generateQuestion = async (req, res) => {
   try {
@@ -69,39 +76,19 @@ const generateQuestion = async (req, res) => {
         .status(404)
         .json({ success: false, message: "User not found" });
     }
-
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
-
-    const recentTransactions = await Transaction.find({ userId })
-      .sort({ createdAt: -1 })
-      .limit(5);
-
-    const userContext = `User profile: Name: ${user.name}, Nickname: ${user.nickname}, Shoe Size: ${user.shoeSize}, Favorite Color: ${user.favoriteColor}, Birth Place: ${user.birthPlace}, Pet Name: ${user.petName}, Mother's Maiden Name: ${user.motherMaidenName}, First School: ${user.firstSchool}, Childhood Friend: ${user.childhoodFriend}. Recent transactions: ${recentTransactions.length} transactions in database.`;
-
-    const prompt = `Based on this user context: ${userContext}. Generate a simple security question that only this specific user would know the answer to. The question should be about personal information like nickname, shoe size, favorite color, birth place, pet name, etc. Return only the question, nothing else. Make it conversational and friendly.`;
-
-    let question;
-    try {
-      const result = await retryWithBackoff(() =>
-        model.generateContent(prompt)
-      );
-      question = result.response.text().trim();
-    } catch (err) {
-      if (err.status === 429) {
-        return res.status(429).json({
-          success: false,
-          message:
-            "Gemini API quota exceeded. Please try again later or check your billing/quota settings.",
-        });
-      }
-      console.error("Gemini AI error:", err);
-      return res.status(500).json({
+    // Find all fields that are filled in
+    const filledFields = QUESTION_TEMPLATES.filter((q) => user[q.field]);
+    if (filledFields.length === 0) {
+      return res.status(400).json({
         success: false,
-        message: "Failed to generate question from AI.",
+        message: "No security info available for this user.",
       });
     }
-
-    // Convert to speech using ElevenLabs TTS
+    // Pick a random field
+    const selected =
+      filledFields[Math.floor(Math.random() * filledFields.length)];
+    const question = selected.question;
+    // Synthesize question audio
     let audioFileName, audioPath;
     try {
       audioFileName = `question_${Date.now()}.mp3`;
@@ -109,7 +96,7 @@ const generateQuestion = async (req, res) => {
       if (!fs.existsSync("audio")) {
         fs.mkdirSync("audio");
       }
-      await synthesizeWithElevenLabs(question, "Rachel", audioPath);
+      await synthesizeWithCoqui(question, audioPath);
     } catch (err) {
       console.error("TTS error:", err);
       return res.status(500).json({
@@ -117,18 +104,19 @@ const generateQuestion = async (req, res) => {
         message: "Failed to synthesize question audio.",
       });
     }
-
+    // Store the question/field in the transaction for later verification
     if (transactionId) {
       await Transaction.findByIdAndUpdate(transactionId, {
         $push: { verificationQuestions: question },
+        $set: { lastVerificationField: selected.field },
       });
     }
-
     res.json({
       success: true,
       question,
-      audioUrl: `http://0.0.0.0:5000/audio/${audioFileName}`,
+      audioUrl: `http://localhost:5000/audio/${audioFileName}`,
       language: user.language,
+      field: selected.field,
     });
   } catch (error) {
     console.error("VoiceCaptcha generateQuestion error:", error);
@@ -153,7 +141,7 @@ const verifyResponse = async (req, res) => {
 
     let transaction = null;
     let attemptsLeft = MAX_ATTEMPTS;
-    let previousQuestions = [];
+    let verificationField = null;
     if (transactionId) {
       transaction = await Transaction.findById(transactionId);
       if (transaction) {
@@ -161,18 +149,22 @@ const verifyResponse = async (req, res) => {
           transaction.verificationAttempts || 0;
         transaction.verificationQuestions =
           transaction.verificationQuestions || [];
-        previousQuestions = transaction.verificationQuestions;
         attemptsLeft = MAX_ATTEMPTS - (transaction.verificationAttempts || 0);
+        verificationField = transaction.lastVerificationField;
       }
     }
 
     const voiceResult = await verifyVoice(userId, audioFile.path);
     const spokenText = await convertSpeechToText(audioFile.path);
     const user = await User.findById(userId);
-    const expectedAnswer = await getExpectedAnswer(user, transactionId);
+    // Use the stored field for answer checking
+    let expectedAnswer = "";
+    if (verificationField && user[verificationField]) {
+      expectedAnswer = user[verificationField].toString();
+    }
     const textSimilarity = calculateSimilarity(
-      spokenText.toLowerCase(),
-      expectedAnswer.toLowerCase()
+      spokenText.trim().toLowerCase(),
+      expectedAnswer.trim().toLowerCase()
     );
     const isContentMatch = textSimilarity > 0.75;
     const overallSuccess =
@@ -181,8 +173,8 @@ const verifyResponse = async (req, res) => {
     if (transaction) {
       transaction.verificationAttempts =
         (transaction.verificationAttempts || 0) + 1;
-      attemptsLeft = MAX_ATTEMPTS - transaction.verificationAttempts;
       await transaction.save();
+      attemptsLeft = MAX_ATTEMPTS - transaction.verificationAttempts;
     }
 
     if (overallSuccess) {
@@ -200,67 +192,10 @@ const verifyResponse = async (req, res) => {
         textSimilarity: textSimilarity,
       });
     } else if (attemptsLeft > 0) {
-      const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-pro-latest",
-      });
-      const recentTransactions = await Transaction.find({ userId })
-        .sort({ createdAt: -1 })
-        .limit(5);
-      const userContext = `User profile: Name: ${user.name}, Nickname: ${user.nickname}, Shoe Size: ${user.shoeSize}, Favorite Color: ${user.favoriteColor}, Birth Place: ${user.birthPlace}, Pet Name: ${user.petName}, Mother's Maiden Name: ${user.motherMaidenName}, First School: ${user.firstSchool}, Childhood Friend: ${user.childhoodFriend}. Recent transactions: ${recentTransactions.length} transactions in database.`;
-      // Limit to last 5 previous questions to avoid prompt bloat
-      const recentQuestions = previousQuestions.slice(-5);
-      const avoidQuestions =
-        recentQuestions.length > 0
-          ? ` Avoid these questions: ${recentQuestions.join(" | ")}.`
-          : "";
-      const prompt = `Based on this user context: ${userContext}. Generate a different security question that only this specific user would know the answer to. The question should be about personal information like nickname, shoe size, favorite color, birth place, pet name, etc. Return only the question, nothing else. Make it conversational and friendly. Do not repeat previous questions.${avoidQuestions}`;
-      let newQuestion;
-      try {
-        const result = await retryWithBackoff(() =>
-          model.generateContent(prompt)
-        );
-        newQuestion = result.response.text().trim();
-      } catch (err) {
-        if (err.status === 429) {
-          return res.status(429).json({
-            success: false,
-            message:
-              "Gemini API quota exceeded. Please try again later or check your billing/quota settings.",
-          });
-        }
-        console.error("Gemini AI error:", err);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to generate question from AI.",
-        });
-      }
-
-      let retryAudioFileName, retryAudioPath;
-      try {
-        retryAudioFileName = `question_${Date.now()}.mp3`;
-        retryAudioPath = `audio/${retryAudioFileName}`;
-        if (!fs.existsSync("audio")) {
-          fs.mkdirSync("audio");
-        }
-        await synthesizeWithElevenLabs(newQuestion, "Rachel", retryAudioPath);
-      } catch (err) {
-        console.error("TTS error:", err);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to synthesize question audio.",
-        });
-      }
-
-      if (transaction) {
-        transaction.verificationQuestions.push(newQuestion);
-        await transaction.save();
-      }
-
+      // The user will be prompted to try again with the same question.
       return res.json({
         success: false,
         message: "Verification failed. Try again.",
-        newQuestion,
-        newAudioUrl: `http://0.0.0.0:5000/audio/${retryAudioFileName}`,
         attemptsLeft,
       });
     } else {
@@ -279,101 +214,14 @@ const verifyResponse = async (req, res) => {
   }
 };
 
-// Convert speech to text using AssemblyAI
-const convertSpeechToText = async (audioPath) => {
-  try {
-    const audioData = fs.readFileSync(audioPath);
-    const uploadResponse = await axios.post(
-      "https://api.assemblyai.com/v2/upload",
-      audioData,
-      {
-        headers: {
-          Authorization: process.env.ASSEMBLYAI_API_KEY,
-          "Content-Type": "application/octet-stream",
-        },
-      }
-    );
-
-    const transcriptResponse = await axios.post(
-      "https://api.assemblyai.com/v2/transcript",
-      { audio_url: uploadResponse.data.upload_url },
-      {
-        headers: {
-          Authorization: process.env.ASSEMBLYAI_API_KEY,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const transcriptId = transcriptResponse.data.id;
-    let transcript;
-
-    do {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      const statusResponse = await axios.get(
-        `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
-        {
-          headers: {
-            Authorization: process.env.ASSEMBLYAI_API_KEY,
-          },
-        }
-      );
-      transcript = statusResponse.data;
-    } while (
-      transcript.status === "processing" ||
-      transcript.status === "queued"
-    );
-
-    return transcript.text || "";
-  } catch (error) {
-    console.error("Speech-to-text error:", error);
-    return "";
-  }
-};
-
+// Update getExpectedAnswer to use the stored field
 const getExpectedAnswer = async (user, transactionId) => {
   try {
     const transaction = await Transaction.findById(transactionId);
-    if (!transaction || !transaction.verificationQuestions.length) {
+    if (!transaction || !transaction.lastVerificationField) {
       return "unknown";
     }
-
-    const lastQuestion = transaction.verificationQuestions
-      .slice(-1)[0]
-      .toLowerCase();
-
-    if (
-      lastQuestion.includes("nickname") ||
-      lastQuestion.includes("call you")
-    ) {
-      return user.nickname || "";
-    }
-    if (lastQuestion.includes("shoe") || lastQuestion.includes("size")) {
-      return user.shoeSize || "";
-    }
-    if (lastQuestion.includes("color") || lastQuestion.includes("favourite")) {
-      return user.favoriteColor || "";
-    }
-    if (lastQuestion.includes("pet") || lastQuestion.includes("animal")) {
-      return user.petName || "";
-    }
-    if (lastQuestion.includes("mother") || lastQuestion.includes("maiden")) {
-      return user.motherMaidenName || "";
-    }
-    if (
-      lastQuestion.includes("school") ||
-      lastQuestion.includes("first school")
-    ) {
-      return user.firstSchool || "";
-    }
-    if (lastQuestion.includes("friend") || lastQuestion.includes("childhood")) {
-      return user.childhoodFriend || "";
-    }
-    if (lastQuestion.includes("born") || lastQuestion.includes("birth")) {
-      return user.birthPlace || "";
-    }
-
-    return "unknown";
+    return user[transaction.lastVerificationField] || "unknown";
   } catch (error) {
     console.error("Error getting expected answer:", error);
     return "unknown";

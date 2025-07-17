@@ -1,6 +1,18 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import VoiceCaptcha from '../components/VoiceCaptcha';
-import { API_BASE_URL } from '../config/api';
+import { API_BASE_URL, apiEndpoints } from '../config/api';
+
+// Add static question templates for transfer verification
+const QUESTION_TEMPLATES = [
+  { field: 'nickname', question: "What is your nickname?" },
+  { field: 'shoeSize', question: "What is your shoe size?" },
+  { field: 'favoriteColor', question: "What is your favorite color?" },
+  { field: 'birthPlace', question: "What is your birth place?" },
+  { field: 'petName', question: "What is your pet's name?" },
+  { field: 'motherMaidenName', question: "What is your mother's maiden name?" },
+  { field: 'firstSchool', question: "What is the name of your first school?" },
+  { field: 'childhoodFriend', question: "Who was your best childhood friend?" }
+];
 
 function Transfer() {
   const [activeTab, setActiveTab] = useState('transfer');
@@ -9,8 +21,31 @@ function Transfer() {
   const [showVoiceVerification, setShowVoiceVerification] = useState(false);
   const [voiceVerified, setVoiceVerified] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [userProfile, setUserProfile] = useState(null);
+  const [selectedQuestion, setSelectedQuestion] = useState(null);
+  const [transactionId, setTransactionId] = useState(null);
 
   const userData = JSON.parse(localStorage.getItem('userData'));
+
+  // Fetch full user profile from backend
+  useEffect(() => {
+    async function fetchProfile() {
+      if (userData?.id) {
+        const res = await fetch(apiEndpoints.getUserProfile(userData.id));
+        const data = await res.json();
+        if (data.success) setUserProfile(data.user);
+      }
+    }
+    fetchProfile();
+  }, [userData]);
+
+  // Pick a random filled field for the question from userProfile, but only when starting verification
+  const getRandomQuestion = () => {
+    if (!userProfile) return null;
+    const filledFields = QUESTION_TEMPLATES.filter(q => userProfile[q.field]);
+    if (filledFields.length === 0) return null;
+    return filledFields[Math.floor(Math.random() * filledFields.length)];
+  };
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -21,10 +56,13 @@ function Transfer() {
     setVoiceVerified(false);
     setShowVoiceVerification(false);
     setVerificationResult(null);
+    setSelectedQuestion(null);
   };
 
   const handleVerificationComplete = async (success, message) => {
     setShowVoiceVerification(false);
+    setSelectedQuestion(null);
+    setTransactionId(null);
 
     if (!success) {
       setVerificationResult({ success: false, message: message || 'Voice verification failed.' });
@@ -36,11 +74,11 @@ function Transfer() {
 
     try {
       let endpoint = '';
-      if (activeTab === 'transfer') endpoint = 'transfer';
-      else if (activeTab === 'deposit') endpoint = 'deposit';
-      else if (activeTab === 'withdraw') endpoint = 'withdraw';
+      if (activeTab === 'transfer') endpoint = apiEndpoints.transferMoney;
+      else if (activeTab === 'deposit') endpoint = apiEndpoints.depositMoney;
+      else if (activeTab === 'withdraw') endpoint = apiEndpoints.withdrawMoney;
 
-      const response = await fetch(`${API_BASE_URL}/api/transactions/${endpoint}`, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -83,10 +121,41 @@ function Transfer() {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    setShowVoiceVerification(true);
+    // Always create a transaction before starting verification
+    let endpoint = '';
+    if (activeTab === 'transfer') endpoint = apiEndpoints.transferMoney;
+    else if (activeTab === 'deposit') endpoint = apiEndpoints.depositMoney;
+    else if (activeTab === 'withdraw') endpoint = apiEndpoints.withdrawMoney;
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: userData.id,
+          amount: parseFloat(formData.amount),
+          recipient: activeTab === 'transfer' ? formData.recipient : undefined,
+        }),
+      });
+      const data = await response.json();
+      if (data.success && data.transactionId) {
+        setTransactionId(data.transactionId);
+        if (!selectedQuestion) {
+          const q = getRandomQuestion();
+          setSelectedQuestion(q);
+        }
+        setShowVoiceVerification(true);
+      } else {
+        setVerificationResult({ success: false, message: data.message || 'Failed to initiate transaction.' });
+      }
+    } catch (error) {
+      setVerificationResult({ success: false, message: error.message });
+    }
   };
+
+  const question = selectedQuestion ? selectedQuestion.question : 'No security info available.';
 
   return (
     <div className="container mt-4 px-4">
@@ -118,7 +187,7 @@ function Transfer() {
         <div>
           <div className="alert alert-warning">
             <strong>Voice Verification Required</strong><br />
-            Please complete the verification to proceed.
+            Please answer the following security question to proceed.
           </div>
 
           <div className="card mb-3">
@@ -129,11 +198,17 @@ function Transfer() {
               )}
               <p><strong>Amount:</strong> ₹{parseFloat(formData.amount)?.toLocaleString('en-IN')}</p>
               <p><strong>Action:</strong> {activeTab.toUpperCase()}</p>
+              <div className="mt-3 alert alert-info">
+                <strong>Security Question:</strong><br />
+                {question}
+              </div>
             </div>
           </div>
 
+          {/* VoiceCaptcha component can be replaced with a simple recorder and submit button if desired */}
           <VoiceCaptcha
-            transactionId={null}
+            question={question}
+            transactionId={transactionId}
             userId={userData?.id}
             onVerificationComplete={handleVerificationComplete}
             isPreVerification={true}

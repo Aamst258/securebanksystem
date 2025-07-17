@@ -48,7 +48,7 @@ function Dashboard() {
         <div className="col-12">
           <h2>Welcome back, {userDetails?.name || user?.name}! 👋</h2>
           <p className="text-muted">
-            Account No: <strong>{userDetails?.accountNumber ?? user?.accountNumber ?? 'Loading...'}</strong>
+            Account No: <strong>{userDetails?.accountNumber || user?.accountNumber || 'Not available'}</strong>
           </p>
           <p className="text-muted">Your secure banking dashboard</p>
         </div>

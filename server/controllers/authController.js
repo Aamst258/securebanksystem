@@ -148,6 +148,7 @@ const login = async (req, res) => {
         email: user.email,
         language: user.language,
         accountBalance: user.accountBalance,
+        accountNumber: user.accountNumber, // Add this line
       },
     });
   } catch (error) {
