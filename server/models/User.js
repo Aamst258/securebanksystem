@@ -44,7 +44,7 @@ const userSchema = new Schema({
   language: { type: String, default: "en" },
 
   // Banking info
-  accountBalance: { type: Number, default: 0 },
+  // Removed accountBalance, use balance instead
   isActive: { type: Boolean, default: true },
   lastLogin: Date,
 
