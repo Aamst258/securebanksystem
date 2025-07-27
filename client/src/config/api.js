@@ -16,6 +16,9 @@ export const apiEndpoints = {
   depositMoney: `${API_BASE_URL}/transactions/deposit`,
   withdrawMoney: `${API_BASE_URL}/transactions/withdraw`,
   transactionHistory: `${API_BASE_URL}/transactions/history`,
+  
+  // ✅ ADD THIS LINE TO FIX THE ERROR
+  completeTransaction: `${API_BASE_URL}/transactions/complete`, 
 
   // Voice APIs
   enrollVoice: `${API_BASE_URL}/voice/enroll`,
