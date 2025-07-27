@@ -166,7 +166,7 @@ const verifyResponse = async (req, res) => {
       spokenText.trim().toLowerCase(),
       expectedAnswer.trim().toLowerCase()
     );
-    const isContentMatch = textSimilarity > 0.75;
+    const isContentMatch = textSimilarity > 0.50;
     const overallSuccess =
       voiceResult.success && voiceResult.isMatch && isContentMatch;
 
