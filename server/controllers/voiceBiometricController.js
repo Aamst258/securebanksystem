@@ -4,7 +4,7 @@ const axios = require("axios");
 const FormData = require("form-data");
 const User = require("../models/User");
 
-const RESEMBLYZER_SERVICE_URL = "http://0.0.0.0:5001";
+const RESEMBLYZER_SERVICE_URL = "http://localhost:5001";
 
 // Register voice using Resemblyzer
 const registerVoice = async (req, res) => {

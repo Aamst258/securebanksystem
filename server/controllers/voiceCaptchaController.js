@@ -31,7 +31,7 @@ const retryWithBackoff = async (fn, retries = 2, delay = 3000) => {
 // Helper to call Python TTS (Coqui)
 async function synthesizeWithCoqui(text, outputPath = "audio/output.mp3") {
   const response = await axios.post(
-    "http://0.0.0.0:5001/tts",
+    "http://localhost:5001/tts",
     { text },
     { responseType: "arraybuffer" }
   );
@@ -44,7 +44,7 @@ async function synthesizeWithCoqui(text, outputPath = "audio/output.mp3") {
 async function convertSpeechToText(audioPath) {
   const formData = new FormData();
   formData.append("audio", fs.createReadStream(audioPath));
-  const response = await axios.post("http://0.0.0.0:5001/stt", formData, {
+  const response = await axios.post("http://localhost:5001/stt", formData, {
     headers: formData.getHeaders(),
   });
   return response.data.text || "";
