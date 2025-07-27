@@ -31,7 +31,7 @@ const retryWithBackoff = async (fn, retries = 2, delay = 3000) => {
 // Helper to call Python TTS (Coqui)
 async function synthesizeWithCoqui(text, outputPath = "audio/output.mp3") {
   const response = await axios.post(
-    "http://localhost:5001/tts",
+    "http://0.0.0.0:5001/tts",
     { text },
     { responseType: "arraybuffer" }
   );
@@ -44,7 +44,7 @@ async function synthesizeWithCoqui(text, outputPath = "audio/output.mp3") {
 async function convertSpeechToText(audioPath) {
   const formData = new FormData();
   formData.append("audio", fs.createReadStream(audioPath));
-  const response = await axios.post("http://localhost:5001/stt", formData, {
+  const response = await axios.post("http://0.0.0.0:5001/stt", formData, {
     headers: formData.getHeaders(),
   });
   return response.data.text || "";
@@ -182,31 +182,69 @@ const verifyResponse = async (req, res) => {
         transaction.status = "approved";
         await transaction.save();
       }
+      
+      // Console logging for successful verification
+      console.log("✅ VOICE VERIFICATION SUCCESS:");
+      console.log(`- User ID: ${userId}`);
+      console.log(`- Transaction ID: ${transactionId}`);
+      console.log(`- Voice Match: ${voiceResult.isMatch}`);
+      console.log(`- Content Match: ${isContentMatch}`);
+      console.log(`- Voice Similarity: ${voiceResult.similarity}`);
+      console.log(`- Text Similarity: ${textSimilarity}`);
+      console.log(`- Expected Answer: "${expectedAnswer}"`);
+      console.log(`- User Said: "${spokenText}"`);
+      console.log("📝 TRANSACTION VERIFIED AND APPROVED");
+      
       return res.json({
         success: true,
         message: "Transaction approved",
         attemptsLeft,
         voiceMatch: voiceResult.isMatch,
         contentMatch: isContentMatch,
-        voiceSimilarity: voiceResult.similarity,
+        // Fix: Send correct field names that frontend expects
+        similarity: voiceResult.similarity, // Frontend expects 'similarity' not 'voiceSimilarity'
+        recognizedText: spokenText, // Frontend expects 'recognizedText'
         textSimilarity: textSimilarity,
       });
     } else if (attemptsLeft > 0) {
+      // Console logging for failed attempt
+      console.log("❌ VOICE VERIFICATION FAILED:");
+      console.log(`- User ID: ${userId}`);
+      console.log(`- Transaction ID: ${transactionId}`);
+      console.log(`- Voice Match: ${voiceResult.isMatch}`);
+      console.log(`- Content Match: ${isContentMatch}`);
+      console.log(`- Voice Similarity: ${voiceResult.similarity}`);
+      console.log(`- Text Similarity: ${textSimilarity}`);
+      console.log(`- Expected Answer: "${expectedAnswer}"`);
+      console.log(`- User Said: "${spokenText}"`);
+      console.log(`- Attempts Left: ${attemptsLeft}`);
+      
       // The user will be prompted to try again with the same question.
       return res.json({
         success: false,
         message: "Verification failed. Try again.",
         attemptsLeft,
+        // Send diagnostic data even on failure
+        similarity: voiceResult.similarity,
+        recognizedText: spokenText,
       });
     } else {
       if (transaction) {
         transaction.status = "denied";
         await transaction.save();
       }
+      
+      console.log("🚫 MAXIMUM ATTEMPTS REACHED:");
+      console.log(`- User ID: ${userId}`);
+      console.log(`- Transaction ID: ${transactionId}`);
+      console.log("- Transaction DENIED");
+      
       return res.json({
         success: false,
         message: "Maximum attempts reached. Transaction denied.",
         attemptsLeft: 0,
+        similarity: voiceResult.similarity,
+        recognizedText: spokenText,
       });
     }
   } catch (error) {

@@ -40,7 +40,7 @@ def convert_audio_to_wav(input_file_path):
     """Converts an audio file to a 16kHz mono WAV file using ffmpeg."""
     # Create a new path for the WAV file based on the input path
     temp_wav_path = os.path.splitext(input_file_path)[0] + ".wav"
-    
+
     ffmpeg_cmd = [
         "ffmpeg",
         "-y",               # Overwrite output file if it exists
@@ -50,7 +50,7 @@ def convert_audio_to_wav(input_file_path):
         "-acodec", "pcm_s16le", # Set audio codec to 16-bit PCM
         temp_wav_path
     ]
-    
+
     try:
         # Using capture_output=True to get stderr for better debugging
         subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
@@ -58,7 +58,7 @@ def convert_audio_to_wav(input_file_path):
         app.logger.error(f"FFmpeg conversion failed. Return code: {e.returncode}")
         app.logger.error(f"FFmpeg stderr: {e.stderr}")
         raise  # Re-raise the exception
-        
+
     return temp_wav_path
 
 
@@ -66,7 +66,7 @@ def convert_audio_to_wav(input_file_path):
 def embed():
     if 'audio' not in request.files:
         return jsonify({'success': False, 'error': 'No audio file part in the request.'}), 400
-    
+
     audio_file = request.files['audio']
     temp_input_path = None
     wav_path = None
@@ -76,13 +76,13 @@ def embed():
         with NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1] or ".webm") as temp_input_file:
             audio_file.save(temp_input_file.name)
             temp_input_path = temp_input_file.name
-        
+
         # Pass the path to the conversion function
         wav_path = convert_audio_to_wav(temp_input_path)
-        
+
         wav = preprocess_wav(wav_path)
         embedding = encoder.embed_utterance(wav)
-        
+
         return jsonify({"success": True, "embedding": embedding.tolist()})
 
     except Exception as e:
@@ -115,12 +115,16 @@ def verify():
             temp_input_path = temp_input_file.name
 
         wav_path = convert_audio_to_wav(temp_input_path)
-        
+
         wav = preprocess_wav(wav_path)
         new_embedding = encoder.embed_utterance(wav)
 
         similarity = np.dot(stored_embedding, new_embedding) / (np.linalg.norm(stored_embedding) * np.linalg.norm(new_embedding))
         is_match = bool(similarity > 0.50)
+
+        # Log success message
+        if is_match:
+            app.logger.info("Voice verification successful")
 
         return jsonify({
             "success": True,
@@ -150,19 +154,19 @@ def stt():
     audio_file = request.files['audio']
     temp_input_path = None
     wav_path = None
-    
+
     try:
         with NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1] or ".webm") as temp_input_file:
             audio_file.save(temp_input_file.name)
             temp_input_path = temp_input_file.name
 
         wav_path = convert_audio_to_wav(temp_input_path)
-        
+
         text = ''
         with wave.open(wav_path, "rb") as wf:
             rec = KaldiRecognizer(vosk_model, wf.getframerate())
             rec.SetWords(True)
-            
+
             while True:
                 data = wf.readframes(4000)
                 if len(data) == 0:
@@ -194,13 +198,13 @@ def tts():
         text = data.get('text', '')
         if not text:
             return jsonify({'success': False, 'error': 'No text provided'}), 400
-        
+
         output_path = os.path.join('audio', 'tts_output.wav')
         tts_model.tts_to_file(text=text, file_path=output_path)
-        
+
         if not os.path.exists(output_path):
             return jsonify({'success': False, 'error': 'TTS output file was not created.'}), 500
-        
+
         return send_file(output_path, mimetype='audio/wav')
 
     except Exception as e:
